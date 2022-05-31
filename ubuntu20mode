@@ -1,0 +1,504 @@
+#!/bin/bash
+# run app on ubuntu 20.04 mode
+#
+
+UBUNTU20_DIR="${UBUNTU20_DIR:-$HOME/.local/lib/ubuntu20mode/}"
+UBUNTU20_ROOT="${UBUNTU20_ROOT:-$UBUNTU20_DIR/root}"
+
+UBUNTU20MODE_DESKTOP_FILES_DIR="$HOME/.local/share/applications/ubuntu20mode/"
+
+
+UBUNTU20_IMAGE_URL="https://mirrors.bfsu.edu.cn/ubuntu-cloud-images/focal/current/focal-server-cloudimg-amd64-root.tar.xz"
+SCRIPT_URL="https://github.com/shellexy/ubuntu20mode/raw/main/ubuntu20mode"
+
+## initialize
+init(){
+    [ ! -e /usr/bin/bwrap ] && [ ! -e /usr/bin/fakeroot-sysv ] && echo "+ sudo apt install bwrap fakeroot" && sudo apt install bubblewrap fakeroot
+    mkdir -p "$UBUNTU20_DIR"
+    mkdir -p "$UBUNTU20_ROOT"
+    mkdir -p "$UBUNTU20_ROOT/$HOME"
+    ## ubuntu 20.04 rootfs
+    cd "$UBUNTU20_DIR"
+    wget -c "$UBUNTU20_IMAGE_URL"
+    fakeroot tar xvf focal-server-cloudimg-amd64-root.tar.xz -C "$UBUNTU20_ROOT" 
+
+    # use snapctl xdg-open
+    echo -e '#!/bin/sh
+test -a /usr/bin/snapctl && exec snapctl user-open "$@" || exec /usr/bin/xdg-open "$@" ' > "$UBUNTU20_ROOT/usr/local/bin/xdg-open"
+    chmod +x "$UBUNTU20_ROOT/usr/local/bin/xdg-open"
+    ## fakeroot
+    wget -c https://mirrors.bfsu.edu.cn/ubuntu/pool/main/f/fakeroot/fakeroot_1.24-1_amd64.deb
+    wget -c https://mirrors.bfsu.edu.cn/ubuntu/pool/main/f/fakeroot/libfakeroot_1.24-1_amd64.deb
+    dpkg -x fakeroot_1.24-1_amd64.deb    "$UBUNTU20_ROOT"
+    dpkg -x libfakeroot_1.24-1_amd64.deb "$UBUNTU20_ROOT"
+    ln -svf fakeroot-sysv "$UBUNTU20_ROOT/usr/bin/fakeroot"
+    ## use fakeroot as sudo
+    ln -svf /usr/bin/fakeroot "$UBUNTU20_ROOT/usr/local/bin/sudo"
+    ## init user, group
+    grep "^$USER:" /etc/passwd >> "$UBUNTU20_ROOT/$HOME/.local/lib/ubuntu20mode/root/etc/passwd"
+    grep "^$USER:" /etc/group  >> "$UBUNTU20_ROOT/$HOME/.local/lib/ubuntu20mode/root/etc/group"
+
+    ## locale
+    bwrap_user locale-gen zh_CN.UTF-8
+    chmod +r "$UBUNTU20_ROOT/etc/locale.gen"
+
+    ## apt sources
+    cat > "$UBUNTU20_ROOT/etc/apt/sources.list" <<OOO
+deb http://mirrors.bfsu.edu.cn/ubuntu/ focal main restricted
+deb http://mirrors.bfsu.edu.cn/ubuntu/ focal-updates main restricted
+deb http://mirrors.bfsu.edu.cn/ubuntu/ focal universe
+deb http://mirrors.bfsu.edu.cn/ubuntu/ focal-updates universe
+deb http://mirrors.bfsu.edu.cn/ubuntu/ focal multiverse
+deb http://mirrors.bfsu.edu.cn/ubuntu/ focal-updates multiverse
+deb http://mirrors.bfsu.edu.cn/ubuntu/ focal-backports main restricted universe multiverse
+deb http://security.ubuntu.com/ubuntu/ focal-security main restricted
+deb http://security.ubuntu.com/ubuntu/ focal-security universe
+deb http://security.ubuntu.com/ubuntu/ focal-security multiverse
+OOO
+    bwrap_root apt update
+    ## jgmenu startmenu
+    wget -c http://mirrors.bfsu.edu.cn/debian/pool/main/j/jgmenu/jgmenu_4.4.0-1_amd64.deb
+    bwrap_root apt install -y /jgmenu_4.4.0-1_amd64.deb
+    ## install l3afpad as notepad
+    wget -c http://mirrors.bfsu.edu.cn/debian/pool/main/l/l3afpad/l3afpad_0.8.18.1.11-3_amd64.deb
+    bwrap_root apt install /l3afpad_0.8.18.1.11-3_amd64.deb
+    ## base package
+    bwrap_root apt install -y --no-install-recommends libwebkit2gtk-4.0-37 gstreamer1.0-pulseaudio libgtk-3-bin xserver-xephyr gir1.2-gtk-3.0 zenity dbus xdg-utils xdg-desktop-portal-gtk language-pack-gnome-zh-hans-base
+    _init_file
+    _fix_apps
+    cd -
+}
+
+## initialize file
+_init_file()(
+    mkdir -p ~/.local/bin/
+    cp "$0" ~/.local/bin/ubuntu20mode
+    chmod +x ~/.local/bin/ubuntu20mode
+    echo > ~/.local/share/applications/ubuntu20mode.desktop '[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Ubuntu 20.04 mode Apps
+Name[zh_CN]=Ubuntu 20.04 mode 应用程序
+GenericName=Ubuntu 20.04 mode Apps
+GenericName[zh_CN]=Ubuntu 20.04 mode 应用程序
+Comment=Launch Ubuntu 20.04 mode Apps
+Comment[zh_CN]=打开 Ubuntu 20.04 mode 应用程序
+Icon=ubuntu-logo.png
+Exec=bash -c "~/.local/bin/ubuntu20mode apps"
+Keywords=Emulator;System;Utility;Ubuntu;apps;
+Terminal=false
+TerminalOptions=
+Categories=Emulator;System;Utility;
+'
+)
+
+
+# upgrade self
+upgeade_self()(
+    mkdir -p ~/.local/bin/
+    wget -O ~/.local/bin/ubuntu20mode "$SCRIPT_URL"
+    chmod +x ~/.local/bin/ubuntu20mode
+)
+
+# fix apps
+_fix_apps()(
+    ## xdg-user-dirs
+    xdg-user-dirs-update
+    ## init inputrc
+    echo > "$UBUNTU20_ROOT/$HOME/.inputrc" '
+##  history search
+"\e[A": history-search-backward
+"\e[B": history-search-forward
+## visible ring
+set visible-stats on
+## menu complete
+"\C-n": menu-complete
+    '
+    ## fix bashrc
+    cp -rv "$UBUNTU20_ROOT/etc/skel/.[bp]*" "$UBUNTU20_ROOT/$HOME/"
+    echo "PS1='${debian_chroot:+($debian_chroot)}\[\033[01;33m\]ubuntu20mode: \[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '" >> "$UBUNTU20_ROOT/$HOME/.bashrc"
+    ## fix l3afpad
+    ln -sfv /usr/bin/l3afpad "$UBUNTU20_ROOT/usr/games/notepad"
+    sed -i 's/Name\[zh_CN\]=L3afpad/Name[zh_CN]=记事本/' "$UBUNTU20_ROOT/usr/share/applications/l3afpad.desktop"
+    ## fix xfce apps
+    echo NoDisplay=true >> "$UBUNTU20_ROOT/usr/share/applications/exo-web-browser.desktop"
+    echo NoDisplay=true >> "$UBUNTU20_ROOT/usr/share/applications/exo-mail-reader.desktop"
+    echo NoDisplay=true >> "$UBUNTU20_ROOT/usr/share/applications/thunar-settings.desktop"
+    echo NoDisplay=true >> "$UBUNTU20_ROOT/usr/share/applications/thunar.desktop"
+    echo NoDisplay=true >> "$UBUNTU20_ROOT/usr/share/applications/xfce4-terminal.desktop"
+    echo NoDisplay=true >> "$UBUNTU20_ROOT/usr/share/applications/htop.desktop"
+    echo NoDisplay=true >> "$UBUNTU20_ROOT/usr/share/applications/xfce4-terminal-settings.desktop"
+    echo NoDisplay=true >> "$UBUNTU20_ROOT/usr/share/applications/info.desktop"
+    ## init jgmenu
+    #bwrap_user jgmenu_run init --theme=col3
+    mkdir -p "$UBUNTU20_ROOT/$HOME/.config/jgmenu/"
+    echo > "$UBUNTU20_ROOT/$HOME/.config/jgmenu/jgmenurc" '
+position_mode = center
+columns = 2
+menu_width = 800
+menu_width_max = 1080
+menu_height_min = 410
+menu_height_max = 800
+menu_padding_top = 15
+menu_padding_right = 15
+menu_padding_bottom = 15
+menu_padding_left = 15
+menu_radius = 15
+menu_border = 4
+#menu_halign = center
+#menu_valign = center
+color_menu_bg = #000000 65
+color_menu_border = #eeeeee 20
+csv_no_dirs = 1
+csv_name_format = %n
+stay_alive = 0
+font = Noto Sans CJK SC 14
+icon_size = 40
+item_height = 44
+    '
+    ## fix xterm
+    echo > "$UBUNTU20_ROOT/$HOME/.Xresources" '
+xterm*background: black
+xterm*foreground: lightgray
+xterm*xftAntialias: true
+xterm*faceName: DejaVu Sans Mono:size=12
+xterm*faceNameDoublesize: Noto Sans Mono CJK SC:size=12'
+    echo > "$UBUNTU20_ROOT/usr/share/applications/ubuntu20mode-shell.desktop" '[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Ubuntu 20.04 mode Shell
+Name[zh_CN]=Ubuntu 20.04 mode Shell
+GenericName=控制台
+GenericName[zh_CN]=控制台
+Comment=打开 Ubuntu 20.04 mode Shell
+Comment[zh_CN]=打开 Ubuntu 20.04 mode Shell
+Icon=/usr/share/icons/Humanity/apps/128/bash.svg
+Exec=bash
+Keywords=system;process
+Terminal=true
+TerminalOptions=
+Categories=System;ConsoleOnly;
+'
+    ## fix MiniBrowser
+    mkdir -p "$UBUNTU20_ROOT/$HOME/.config/xfce4/"
+    echo > "$UBUNTU20_ROOT/$HOME/.config/xfce4/helpers.rc" '
+WebBrowser=firefox
+FileManager=Thunar
+TerminalEmulator=xfce4-terminal
+'
+    ln -sfv ../../lib/x86_64-linux-gnu/webkit2gtk-4.0/MiniBrowser "$UBUNTU20_ROOT/usr/local/bin/"
+    ## fix MiniBrowser homepage
+    sed -i 's,http://www.webkitgtk.org,https://firefoxchina.cn/,' "$UBUNTU20_ROOT/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/MiniBrowser"
+    chmod +x "$UBUNTU20_ROOT/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/MiniBrowser"
+    echo > "$UBUNTU20_ROOT/usr/games/firefox" '#!/bin/bash
+## fix MiniBrowser startpage
+## firefox searchpage https://start.firefoxchina.cn/
+## firefox homepage https://home.firefoxchina.cn/
+fx='/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/MiniBrowser --default-charset=UTF-8 --allow-universal-access-from-file-urls=true '
+test -z "$1" && exec $fx https://start.firefoxchina.cn/
+exec $fx "$@" '
+    chmod +x "$UBUNTU20_ROOT/usr/games/firefox"
+    mkdir -p ~/.local/share/pixmaps/
+    cp /snap/firefox/current/default256.png ~/.local/share/pixmaps/
+    cp /snap/firefox/current/default256.png "$UBUNTU20_ROOT/usr/share/pixmaps/firefox.png" \
+        || cp usr/share/icons/Humanity/apps/48/web-browser.svg "$UBUNTU20_ROOT/usr/share/pixmaps/firefox.svg"
+    echo > "$UBUNTU20_ROOT/usr/share/applications/firefox-mini.desktop" '
+[Desktop Entry]
+Version=1.0
+Name=Firefox Mini Browser
+Name[zh_CN]=Firefox 迷你浏览器
+Comment=Browse the World Wide Web
+Comment[zh_CN]=浏览互联网
+GenericName=Web Browser
+GenericName[zh_CN]=网络浏览器
+Keywords=Internet;WWW;Browser;Web;Explorer;MiniBrowser
+Keywords[zh_CN]=Internet;WWW;Browser;Web;Explorer;MiniBrowser;网页;浏览;上网;火狐;Firefox;ff;互联网;网站;
+Exec=/usr/games/firefox %u
+Terminal=false
+X-MultipleArgs=false
+Type=Application
+Icon=firefox
+Categories=GNOME;GTK;Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;image/gif;image/jpeg;image/png;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/ftp;x-scheme-handler/chrome;video/webm;application/x-xpinstall;
+StartupNotify=true
+Actions=NewWindow;NewPrivateWindow;NewEditorWindow
+
+[Desktop Action NewWindow]
+Name=Open a New Window
+Name[zh_CN]=新建窗口
+Exec=firefox -new-window
+
+[Desktop Action NewPrivateWindow]
+Name=Open a New Private Window
+Name[zh_CN]=新建隐身窗口
+Exec=/usr/games/firefox --private
+
+[Desktop Action NewEditorWindow]
+Name=Open a New HTML Editor Window
+Name[zh_CN]=新建编辑器窗口
+Exec=/usr/games/firefox --editor-mode    '
+
+    ## gtk-app-chooser launcher
+    echo  > "$UBUNTU20_ROOT/usr/local/bin/gtk-app-chooser" '#!/usr/bin/python3
+## show all apps and launch
+##
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gio
+
+
+def all_app_chooser_dialog():
+    """show all app chooser dialog"""
+    ad = Gtk.AppChooserDialog.new_for_content_type(None, 0, "*")
+    ad.set_title("Ubuntu 20.04 mode")
+    ad.set_default_size(100, ad.get_screen().get_height() - 120)
+    ad.show()
+    show_all_button = ad.get_children()[0].get_children()[1].get_children()[2]
+    show_all_button.clicked()
+    r = ad.run()
+    print(r)
+    if r != -5:
+        return
+    app = ad.get_app_info()
+    return app
+
+
+if __name__ == "__main__":
+    app = all_app_chooser_dialog()
+    print(app)
+    if app:
+        app.launch()
+'
+    chmod "$UBUNTU20_ROOT/usr/local/bin/gtk-app-chooser"
+)
+
+# fix environment variable
+_fix_env(){
+true
+}
+
+# gen .menu file
+_gen_desktop_file_menu_file(){
+    DIR=$(basename $UBUNTU20MODE_DESKTOP_FILES_DIR)
+    echo '<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN"
+    "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">
+<!-- Do not edit manually - generated and managed by xdg-desktop-menu -->
+<Menu>
+    <Name>Applications</Name>
+<Menu>
+    <Name>ubuntu20mode</Name>
+    <Directory>ubuntu20mode.directory</Directory>
+    <Include>'
+    ls "$UBUNTU20MODE_DESKTOP_FILES_DIR" | while read fn ; do
+        echo "        <Filename>$DIR-$fn</Filename>"
+    done
+    echo '    </Include>
+</Menu>
+</Menu>'
+}
+
+# update start menu
+update_desktop_menu(){
+    mkdir -p "$UBUNTU20MODE_DESKTOP_FILES_DIR"
+    ## check up apps
+    apps=`diff -i <(ls $UBUNTU20_ROOT/usr/share/applications/ | sort) <(ls /usr/share/applications/   | sort) | grep '<' | sed 's/^< //'`
+    diff -i <(echo "$apps") <(ls $UBUNTU20MODE_DESKTOP_FILES_DIR) && return # no change
+    ## update menu
+    #ln -s "$UBUNTU20_ROOT/usr/share/pixmaps/"* ~/.local/share/pixmaps/ 2>/dev/null
+    rm "$UBUNTU20MODE_DESKTOP_FILES_DIR"/*
+    #cp "$UBUNTU20_ROOT/usr/share/applications/"* "$UBUNTU20MODE_DESKTOP_FILES_DIR"
+    ## diff apps
+    apps=`echo "$apps" | sed "s;^;$UBUNTU20_ROOT/usr/share/applications/;"`
+    cp $apps "$UBUNTU20MODE_DESKTOP_FILES_DIR/"
+    ## fix apps Exec
+    sed -i 's/Exec=/Exec=ubuntu20mode run /' "$UBUNTU20MODE_DESKTOP_FILES_DIR/"*
+    sed -i 's/^Name.*/\0 (Ubuntu 20.04 mode)/' "$UBUNTU20MODE_DESKTOP_FILES_DIR/"*
+    #cp ~/.local/share/applications/ubuntu20mode.desktop "$UBUNTU20MODE_DESKTOP_FILES_DIR/ubuntu20mode+.desktop"
+    ## fix apps directories
+    echo '[Desktop Entry]
+Version=1.0
+Type=Directory
+Name=Ubuntu 20.04 Mode Apps
+Icon=applications-multimedia' > ~/.local/share/desktop-directories/ubuntu20mode.directory
+    _gen_desktop_file_menu_file > ~/.config/menus/applications-merged/ubuntu20mode.menu
+    xdg-desktop-menu  forceupdate
+    xdg-icon-resource forceupdate
+}
+
+
+_get_bind_try_args()(
+    quote ()
+    {
+        local quoted=${1//\'/\'\\\'\'};
+        printf '%s' "$quoted"
+    }
+    # --bind-try args
+    {
+        for i in DESKTOP DOWNLOAD TEMPLATES PUBLICSHARE DOCUMENTS MUSIC PICTURES VIDEOS ; do xdg-user-dir $i ; done
+    } | while read i
+    do
+        bind_try=$(quote "$i")
+        echo -n " --bind-try $bind_try $bind_try  "
+    done
+)
+
+# run ubuntu20mode bash
+bash(){
+    run /bin/bash "$@"
+}
+
+## show start menu
+apps(){
+    #run gtk-app-chooser
+    update_desktop_menu
+    run jgmenu &
+}
+
+
+## apt list --installed
+list(){
+    run apt list --installed "$@"
+}
+
+## apt search
+search(){
+    run apt search "$@"
+}
+
+## apt show
+show(){
+    run apt show "$@"
+}
+
+## sudo apt install
+install(){
+    run sudo apt install --no-install-recommends "$@"
+    update_desktop_menu
+}
+
+## sudo apt update
+update(){
+    run sudo apt update "$@"
+}
+
+## sudo apt upgrade
+upgrade(){
+    run sudo apt upgrade "$@"
+    update_desktop_menu
+}
+
+## apt list --upgradable
+upgradable(){
+    run apt list --upgradable "$@"
+}
+
+## sudo apt autopurge
+remove(){
+    run sudo apt autopurge "$@"
+    update_desktop_menu
+}
+
+## apt policy
+policy(){
+    run apt policy "$@"
+}
+
+## apt rdepends
+rdepends(){
+    run apt rdepends "$@"
+}
+
+
+## show files
+files(){
+    run thunar "$@"
+}
+
+# run command
+run(){
+    if [ ! -e "$UBUNTU20_ROOT/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/MiniBrowser" ] ; then
+        echo "ubuntu 20.04 mode was not initialized, please run init"
+        read -e -p "would you like to initialize now? [Y/n] " ret
+        [ "$ret" = y -o "$ret" = Y ] || exit 1
+        init
+    fi    
+    ## fix dbus session
+    if echo $DBUS_SESSION_BUS_ADDRESS | grep /run/user/$UID/bus
+    then
+        bwrap_user dbus-run-session "$@"
+        #bwrap_user dbus-launch "$@"
+    else
+        bwrap_user "$@"
+    fi
+
+}
+
+# user bwrap
+bwrap_user()(
+    #env | grep BUS
+    bind_try_args=`_get_bind_try_args`
+    [ "$1" = which ] || set -x
+    bwrap --bind "$UBUNTU20_ROOT" / \
+        $bind_try_args \
+        --dev-bind /dev /dev --dev-bind /proc /proc --dev-bind /sys /sys --bind /tmp /tmp --dev-bind /run /run \
+        --ro-bind /etc/resolv.conf /etc/resolv.conf --ro-bind /etc/hosts /etc/hosts \
+        --ro-bind-try /usr/share/fonts/opentype/noto/ /usr/share/fonts/noto \
+        --ro-bind-try /usr/bin/snapctl /usr/bin/snapctl \
+        --ro-bind-try  /usr/share/themes/Yaru /usr/share/themes/Yaru \
+        --ro-bind-try /usr/share/icons/breeze /usr/share/icons/breeze \
+        --ro-bind-try /usr/share/icons/breeze-dark /usr/share/icons/breeze-dark \
+        --tmpfs /run/user/$UID/doc \
+        --setenv FAKEROOTDONTTRYCHOWN 1 \
+        --share-net --die-with-parent "${@:-bash}"
+)
+
+# root bwrap
+bwrap_root()(
+    bwrap --bind "$UBUNTU20_ROOT" / \
+        --dev-bind /dev /dev --dev-bind /proc /proc --dev-bind /sys /sys --bind /tmp /tmp --dev-bind /run /run \
+        --ro-bind /etc/resolv.conf /etc/resolv.conf --ro-bind /etc/hosts /etc/hosts \
+        --setenv FAKEROOTDONTTRYCHOWN 1 \
+        --share-net --die-with-parent fakeroot "${@:-bash}"
+)
+
+# list commands
+help(){
+    echo commands：
+    declare -F | grep -oP ' [a-z]+.*' | sort
+}
+
+# interactive cmd
+_cmd_main()(
+    _fix_env
+    if [ -n "$1" ] ; then
+        if [ "$(type -t $1)" = function ] ; then
+            "$@"
+            exit
+        elif bwrap_user which "$1" ; then
+            bwrap_user "$@"
+            exit
+        else
+            echo "command not found."
+            help
+            exit
+        fi
+    fi
+    while read -e -p 'ubuntu20mode> ' CMD ; do
+        if [ "$CMD" = q -o "$CMD" = quit ] ; then
+            exit
+        elif [ "$(type -t ${CMD/ */})" = function ] ; then
+            $CMD
+        elif bwrap_user which "${CMD/ */}" ; then
+            bwrap_user $CMD
+            continue
+        else
+            echo "command not found."
+            help
+        fi
+    done
+)
+
+_cmd_main "$@"
+
