@@ -8,6 +8,9 @@ Run apps on Ubuntu 20.04 mode
 
     wget https://github.com/shellexy/ubuntu20mode/raw/main/ubuntu20mode
     bash ubuntu20mode init
+    # or
+    wget --no-check-certificate https://raw.fastgit.org/shellexy/ubuntu20mode/main/ubuntu20mode
+    bash ubuntu20mode init
 
 # Usage
 
