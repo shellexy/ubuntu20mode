@@ -13,6 +13,15 @@ SCRIPT_URL="https://github.com/shellexy/ubuntu20mode/raw/main/ubuntu20mode"
 
 ## initialize
 init(){
+    sudo tee /etc/apparmor.d/bwrap <<EOF
+    abi <abi/4.0>, include <tunables/global>
+    profile bwrap /usr/bin/bwrap flags=(unconfined) {
+        userns,
+        # Site-specific additions and overrides. See local/README for details.
+        include if exists <local/bwrap>
+    }
+    EOF    
+    sudo systemctl restart apparmor.service
     [ ! -e /usr/bin/bwrap ] && [ ! -e /usr/bin/fakeroot-sysv ] && echo "+ sudo apt install bwrap fakeroot" && sudo apt install bubblewrap fakeroot
     mkdir -p "$UBUNTU20_DIR"
     mkdir -p "$UBUNTU20_ROOT"
